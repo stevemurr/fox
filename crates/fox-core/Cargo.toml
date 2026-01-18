@@ -1,0 +1,26 @@
+[package]
+name = "fox-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core library for Fox terminal browser - fetching, extraction, and markdown conversion"
+
+[dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+chromiumoxide = { workspace = true }
+scraper = { workspace = true }
+html5ever = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+textwrap = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"

@@ -1,0 +1,28 @@
+# Fox Browser Configuration
+
+[general]
+# Default viewing mode: "reader" (extracted content) or "full" (complete HTML)
+default_mode = "reader"
+
+# Enable JavaScript rendering via headless browser
+javascript = true
+
+# Request timeout in seconds
+timeout_secs = 30
+
+[display]
+# Maximum text width for wrapping (0 = terminal width)
+max_width = 80
+
+# Link display style: "inline", "footnote", or "hidden"
+show_links = "inline"
+
+# Show image placeholders
+show_images = true
+
+[keybindings]
+# Custom keybindings (optional)
+# Format: action = "key"
+# Example:
+# quit = "Q"
+# scroll_down = "J"

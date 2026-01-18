@@ -1,0 +1,24 @@
+[package]
+name = "fox-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Interactive TUI for Fox terminal browser"
+
+[dependencies]
+fox-core = { path = "../fox-core" }
+tokio = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+directories = { workspace = true }
+unicode-width = { workspace = true }
+textwrap = { workspace = true }
+arboard = { workspace = true }
+tracing = { workspace = true }

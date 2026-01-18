@@ -1,0 +1,21 @@
+[package]
+name = "fox"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Fox - A hyper-modern terminal web browser with vim-mode navigation"
+
+[[bin]]
+name = "fox"
+path = "src/main.rs"
+
+[dependencies]
+fox-core = { path = "../fox-core" }
+fox-tui = { path = "../fox-tui" }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+serde_json = { workspace = true }
