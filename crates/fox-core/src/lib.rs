@@ -1,15 +1,22 @@
 //! Fox Core Library
 //!
 //! Core functionality for the Fox terminal browser including:
+//! - Chrome browser lifecycle management
 //! - HTTP and headless browser fetching
 //! - Readability content extraction
 //! - HTML to Markdown conversion
 
+pub mod accessibility;
+pub mod chrome;
 pub mod extract;
 pub mod fetch;
 pub mod markdown;
 
 use thiserror::Error;
+
+// Re-export key types
+pub use accessibility::{ax_tree_to_markdown, fetch_ax_tree, AXNode, AXTree};
+pub use chrome::{ChromeConfig, ChromeManager, ChromeSource, DownloadProgress, ExtractionMethod};
 
 #[derive(Error, Debug)]
 pub enum FoxError {

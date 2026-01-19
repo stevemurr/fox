@@ -9,6 +9,7 @@ Fox is a terminal web browser written in Rust with vim-style navigation. It's de
 The project is organized as a Cargo workspace with three crates:
 
 - **fox-core**: Core library with no TUI dependencies
+  - `chrome.rs` - Chrome lifecycle management (auto-download, system detection)
   - `fetch.rs` - HTTP client (reqwest) and headless browser (chromiumoxide)
   - `extract.rs` - Readability-style content extraction
   - `markdown.rs` - HTML to Markdown conversion
@@ -70,3 +71,21 @@ cargo test
 - History: `~/.local/share/fox/history.json`
 - Config: `~/.config/fox/config.toml`
 - Tabs (session): `~/.local/share/fox/tabs.json`
+- Bundled Chrome: `~/.local/share/fox/chrome/`
+
+## Chrome Management
+
+Fox can auto-download Chrome for Testing when no system Chrome is found:
+
+- **auto** (default): Use bundled Chrome if downloaded, fall back to system, then download
+- **bundled**: Only use downloaded Chrome for Testing
+- **system**: Only use system-installed Chrome
+- **none**: Disable JavaScript rendering
+
+Configure in `config.toml`:
+```toml
+[browser]
+mode = "auto"
+chrome_path = ""  # optional: custom Chrome path for system mode
+auto_update = true
+```

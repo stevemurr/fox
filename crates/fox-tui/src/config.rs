@@ -13,6 +13,10 @@ pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
 
+    /// Browser settings
+    #[serde(default)]
+    pub browser: BrowserConfig,
+
     /// Display settings
     #[serde(default)]
     pub display: DisplayConfig,
@@ -79,6 +83,51 @@ pub struct KeybindingsConfig {
     pub custom: std::collections::HashMap<String, String>,
 }
 
+/// Browser/Chrome settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserConfig {
+    /// Browser mode: "auto", "bundled", "system", or "none"
+    /// - auto: Use bundled Chrome if available, fall back to system, then download
+    /// - bundled: Use downloaded Chrome for Testing only
+    /// - system: Use system-installed Chrome only
+    /// - none: Disable JavaScript rendering entirely
+    #[serde(default = "default_browser_mode")]
+    pub mode: String,
+
+    /// Custom Chrome binary path (only used when mode = "system")
+    #[serde(default)]
+    pub chrome_path: Option<String>,
+
+    /// Auto-update bundled Chrome when a new version is available
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+
+    /// Content extraction method: "accessibility" or "readability"
+    /// - accessibility: Use Chrome's accessibility tree (requires JS, better for dynamic pages)
+    /// - readability: Use readability-style extraction (works without JS)
+    #[serde(default = "default_extraction_method")]
+    pub extraction_method: String,
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_browser_mode(),
+            chrome_path: None,
+            auto_update: default_true(),
+            extraction_method: default_extraction_method(),
+        }
+    }
+}
+
+fn default_browser_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_extraction_method() -> String {
+    "accessibility".to_string()
+}
+
 // Default value functions
 fn default_mode() -> String {
     "reader".to_string()
@@ -100,6 +149,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             general: GeneralConfig::default(),
+            browser: BrowserConfig::default(),
             display: DisplayConfig::default(),
             keybindings: KeybindingsConfig::default(),
         }
@@ -156,6 +206,32 @@ impl Config {
             "timeout" => {
                 self.general.timeout_secs = value.parse().unwrap_or(30);
             }
+            "browser_mode" | "browser" => {
+                let valid = ["auto", "bundled", "system", "none"];
+                if valid.contains(&value) {
+                    self.browser.mode = value.to_string();
+                }
+            }
+            "chrome_path" => {
+                self.browser.chrome_path = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+            "auto_update" => {
+                self.browser.auto_update = value.parse().unwrap_or(true);
+            }
+            "extraction_method" | "extraction" => {
+                let valid = ["accessibility", "ax", "a11y", "readability", "reader"];
+                if valid.contains(&value.to_lowercase().as_str()) {
+                    self.browser.extraction_method = match value.to_lowercase().as_str() {
+                        "accessibility" | "ax" | "a11y" => "accessibility".to_string(),
+                        "readability" | "reader" => "readability".to_string(),
+                        _ => "accessibility".to_string(),
+                    };
+                }
+            }
             _ => {
                 // Store in custom keybindings
                 self.keybindings.custom.insert(key.to_string(), value.to_string());
@@ -163,6 +239,24 @@ impl Config {
         }
         self.save()?;
         Ok(())
+    }
+
+    /// Convert to fox-core ChromeConfig
+    pub fn to_chrome_config(&self) -> fox_core::ChromeConfig {
+        let data_dir = ProjectDirs::from("", "", "fox")
+            .map(|d| d.data_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from(".fox"));
+
+        let extraction_method = self.browser.extraction_method.parse()
+            .unwrap_or(fox_core::ExtractionMethod::Accessibility);
+
+        fox_core::ChromeConfig {
+            mode: self.browser.mode.clone(),
+            chrome_path: self.browser.chrome_path.as_ref().map(std::path::PathBuf::from),
+            data_dir,
+            auto_update: self.browser.auto_update,
+            extraction_method,
+        }
     }
 }
 

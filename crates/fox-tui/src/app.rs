@@ -52,7 +52,8 @@ impl App {
             ..Default::default()
         };
 
-        let fetcher = Fetcher::with_config(fetch_config).await?;
+        let chrome_config = config.to_chrome_config();
+        let fetcher = Fetcher::with_config_and_chrome(fetch_config, chrome_config).await?;
 
         Ok(Self {
             tabs: TabManager::new(),
