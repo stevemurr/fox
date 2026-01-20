@@ -15,20 +15,33 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.size();
     app.set_viewport_size(size.width, size.height);
 
+    // Calculate suggestion height
+    let suggestion_height = if app.vim.mode == VimMode::Command && !app.url_suggestions.is_empty() {
+        (app.url_suggestions.len() as u16).min(10).min(size.height.saturating_sub(4))
+    } else {
+        0
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Tab bar
-            Constraint::Min(1),    // Content
-            Constraint::Length(1), // Status bar
-            Constraint::Length(1), // Command/input line
+            Constraint::Length(1),                    // Tab bar
+            Constraint::Min(1),                       // Content
+            Constraint::Length(1),                    // Status bar
+            Constraint::Length(suggestion_height),   // URL suggestions
+            Constraint::Length(1),                    // Command/input line
         ])
         .split(size);
 
     draw_tab_bar(frame, app, chunks[0]);
     draw_content(frame, app, chunks[1]);
     draw_status_bar(frame, app, chunks[2]);
-    draw_command_line(frame, app, chunks[3]);
+
+    if suggestion_height > 0 {
+        draw_suggestions(frame, app, chunks[3]);
+    }
+
+    draw_command_line(frame, app, chunks[4]);
 }
 
 fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -74,20 +87,21 @@ fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
 
-    // Get link hints if in hint mode
-    let hint_chars: std::collections::HashMap<usize, char> = app
-        .link_hints
-        .iter()
-        .filter_map(|(c, link)| {
-            // Find which line contains this link
-            let content = tab.content()?;
+    // Get link hints if in hint mode - now supports multi-letter hints
+    // Use Vec to store multiple hints per line
+    let mut hint_strings: std::collections::HashMap<usize, Vec<String>> = std::collections::HashMap::new();
+    for (hint, link) in app.link_hints.iter() {
+        if let Some(content) = tab.content() {
             let line_num = content[..link.position.min(content.len())]
                 .lines()
                 .count()
                 .saturating_sub(1);
-            Some((line_num, *c))
-        })
-        .collect();
+            hint_strings.entry(line_num).or_default().push(hint.clone());
+        }
+    }
+
+    // Current hint input for highlighting matched prefix
+    let hint_input = &app.hint_input;
 
     // Render content
     let lines: Vec<Line> = tab
@@ -98,17 +112,40 @@ fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
             let line_idx = tab.scroll_offset() + i;
             let mut spans = vec![];
 
-            // Add hint character if in hint mode
+            // Add hint labels if in hint mode (multiple hints per line)
             if app.vim.mode == VimMode::Hint {
-                if let Some(&hint) = hint_chars.get(&line_idx) {
-                    spans.push(Span::styled(
-                        format!("[{}]", hint),
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::raw(" "));
+                if let Some(hints) = hint_strings.get(&line_idx) {
+                    for hint in hints {
+                        // Only show hints that match the current input prefix
+                        if hint.starts_with(hint_input) {
+                            // Split hint into matched and unmatched parts
+                            let matched = &hint[..hint_input.len()];
+                            let remaining = &hint[hint_input.len()..];
+
+                            // Show matched part in dim style (already typed)
+                            if !matched.is_empty() {
+                                spans.push(Span::styled(
+                                    matched.to_string(),
+                                    Style::default()
+                                        .fg(Color::DarkGray)
+                                        .bg(Color::Yellow),
+                                ));
+                            }
+
+                            // Show remaining part in bold (still to type)
+                            if !remaining.is_empty() {
+                                spans.push(Span::styled(
+                                    remaining.to_string(),
+                                    Style::default()
+                                        .fg(Color::Black)
+                                        .bg(Color::Yellow)
+                                        .add_modifier(Modifier::BOLD),
+                                ));
+                            }
+
+                            spans.push(Span::raw(" "));
+                        }
+                    }
                 }
             }
 
@@ -195,11 +232,19 @@ fn draw_command_line(frame: &mut Frame, app: &App, area: Rect) {
     let content = match app.vim.mode {
         VimMode::Command => format!(":{}", app.input),
         VimMode::Search => format!("/{}", app.input),
+        VimMode::Hint => {
+            if app.hint_input.is_empty() {
+                "Follow hint...".to_string()
+            } else {
+                format!("Follow hint: {}", app.hint_input)
+            }
+        }
         _ => app.status.clone().unwrap_or_default(),
     };
 
     let style = match app.vim.mode {
         VimMode::Command | VimMode::Search => Style::default().fg(Color::White),
+        VimMode::Hint => Style::default().fg(Color::Yellow),
         _ => Style::default().fg(Color::DarkGray),
     };
 
@@ -213,39 +258,54 @@ fn draw_command_line(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// Style a markdown line with colors
+/// Draw URL suggestions popup for :o command
+fn draw_suggestions(frame: &mut Frame, app: &App, area: Rect) {
+    let lines: Vec<Line> = app.url_suggestions
+        .iter()
+        .enumerate()
+        .map(|(i, suggestion)| {
+            let is_selected = i == app.suggestion_index;
+
+            // Build display text with URL and optional title
+            let display = if let Some(title) = &suggestion.title {
+                format!("{} - {}", suggestion.url, title)
+            } else {
+                suggestion.url.clone()
+            };
+
+            // Truncate if too long
+            let max_width = area.width.saturating_sub(2) as usize;
+            let display = if display.len() > max_width {
+                format!("{}...", &display[..max_width.saturating_sub(3)])
+            } else {
+                display
+            };
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White).bg(Color::DarkGray)
+            };
+
+            Line::from(Span::styled(display, style))
+        })
+        .collect();
+
+    let suggestions = Paragraph::new(lines)
+        .style(Style::default().bg(Color::DarkGray));
+
+    frame.render_widget(suggestions, area);
+}
+
+/// Style a line with colors (content is already plain text with markdown stripped)
 fn style_markdown_line(line: &str) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
-    // Headers
-    if line.starts_with("# ") {
-        spans.push(Span::styled(
-            line.to_string(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        return spans;
-    }
-    if line.starts_with("## ") || line.starts_with("### ") {
-        spans.push(Span::styled(
-            line.to_string(),
-            Style::default()
-                .fg(Color::Blue)
-                .add_modifier(Modifier::BOLD),
-        ));
-        return spans;
-    }
-    if line.starts_with("#### ") || line.starts_with("##### ") || line.starts_with("###### ") {
-        spans.push(Span::styled(
-            line.to_string(),
-            Style::default().fg(Color::Blue),
-        ));
-        return spans;
-    }
-
-    // Code blocks
-    if line.starts_with("```") || line.starts_with("    ") {
+    // Code blocks (indented lines)
+    if line.starts_with("    ") {
         spans.push(Span::styled(
             line.to_string(),
             Style::default().fg(Color::Green),
@@ -253,27 +313,43 @@ fn style_markdown_line(line: &str) -> Vec<Span<'static>> {
         return spans;
     }
 
-    // Lists
+    // Lists with bullet points
     if line.trim_start().starts_with("- ") || line.trim_start().starts_with("* ") {
         let indent = line.len() - line.trim_start().len();
         if indent > 0 {
             spans.push(Span::raw(" ".repeat(indent)));
         }
         spans.push(Span::styled(
-            "•".to_string(),
+            "• ".to_string(),
             Style::default().fg(Color::Yellow),
         ));
         let rest = line.trim_start();
         let content = rest.strip_prefix("- ")
             .or_else(|| rest.strip_prefix("* "))
-            .unwrap_or("")
-            .to_string();
-        spans.push(Span::raw(content));
+            .unwrap_or("");
+        spans.push(Span::raw(content.to_string()));
         return spans;
     }
 
-    // Blockquotes
-    if line.starts_with("> ") {
+    // Numbered lists (like HN stories: "1.", "2.", etc.)
+    let trimmed = line.trim_start();
+    if let Some(dot_pos) = trimmed.find('.') {
+        if dot_pos > 0 && dot_pos <= 3 && trimmed[..dot_pos].chars().all(|c| c.is_ascii_digit()) {
+            let indent = line.len() - trimmed.len();
+            if indent > 0 {
+                spans.push(Span::raw(" ".repeat(indent)));
+            }
+            spans.push(Span::styled(
+                trimmed[..dot_pos + 1].to_string(),
+                Style::default().fg(Color::Yellow),
+            ));
+            spans.push(Span::raw(trimmed[dot_pos + 1..].to_string()));
+            return spans;
+        }
+    }
+
+    // Blockquotes (lines starting with │)
+    if line.starts_with("│ ") {
         spans.push(Span::styled(
             line.to_string(),
             Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
@@ -281,30 +357,24 @@ fn style_markdown_line(line: &str) -> Vec<Span<'static>> {
         return spans;
     }
 
-    // Links - simple detection
-    if line.contains("](") {
-        // Basic link highlighting
+    // Image placeholders [alt text]
+    if line.contains("[") && line.contains("]") && !line.contains("](") {
         let line_owned = line.to_string();
         let mut remaining = line_owned.as_str();
 
-        while let Some(link_start) = remaining.find('[') {
-            // Add text before link
-            if link_start > 0 {
-                spans.push(Span::raw(remaining[..link_start].to_string()));
+        while let Some(start) = remaining.find('[') {
+            if start > 0 {
+                spans.push(Span::raw(remaining[..start].to_string()));
             }
-
-            if let Some(link_end) = remaining[link_start..].find(')') {
-                let link_text = &remaining[link_start..link_start + link_end + 1];
+            if let Some(end) = remaining[start..].find(']') {
+                let bracket_content = &remaining[start..start + end + 1];
                 spans.push(Span::styled(
-                    link_text.to_string(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::UNDERLINED),
+                    bracket_content.to_string(),
+                    Style::default().fg(Color::DarkGray),
                 ));
-                let new_pos = link_start + link_end + 1;
-                remaining = &remaining[new_pos..];
+                remaining = &remaining[start + end + 1..];
             } else {
-                spans.push(Span::raw(remaining[link_start..].to_string()));
+                spans.push(Span::raw(remaining[start..].to_string()));
                 return spans;
             }
         }
@@ -314,23 +384,16 @@ fn style_markdown_line(line: &str) -> Vec<Span<'static>> {
         return spans;
     }
 
-    // Bold text
-    if line.contains("**") {
-        let parts: Vec<&str> = line.split("**").collect();
-        for (i, part) in parts.iter().enumerate() {
-            if i % 2 == 1 {
-                spans.push(Span::styled(
-                    part.to_string(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::raw(part.to_string()));
-            }
-        }
+    // Separator lines
+    if line.trim() == "---" || line.trim() == "***" || line.trim() == "___" {
+        spans.push(Span::styled(
+            "─".repeat(40),
+            Style::default().fg(Color::DarkGray),
+        ));
         return spans;
     }
 
-    // Default
+    // Default - just show the text
     spans.push(Span::raw(line.to_string()));
     spans
 }

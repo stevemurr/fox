@@ -83,13 +83,111 @@ impl Tab {
                 if line.trim().is_empty() {
                     vec![String::new()]
                 } else {
-                    textwrap::wrap(line, width)
+                    // Convert markdown to plain text before wrapping
+                    let plain = Self::markdown_to_plain(line);
+                    textwrap::wrap(&plain, width)
                         .into_iter()
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>()
                 }
             })
             .collect()
+    }
+
+    /// Convert markdown syntax to plain text for display
+    fn markdown_to_plain(line: &str) -> String {
+        let mut result = String::with_capacity(line.len());
+        let mut chars = line.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            match c {
+                // Handle images ![alt](url) - show alt text or nothing
+                '!' if chars.peek() == Some(&'[') => {
+                    chars.next(); // consume '['
+                    let mut alt = String::new();
+                    let mut found_end = false;
+                    while let Some(c) = chars.next() {
+                        if c == ']' {
+                            if chars.peek() == Some(&'(') {
+                                chars.next(); // consume '('
+                                // Skip URL until )
+                                let mut depth = 1;
+                                while let Some(c) = chars.next() {
+                                    if c == '(' { depth += 1; }
+                                    if c == ')' { depth -= 1; if depth == 0 { break; } }
+                                }
+                                found_end = true;
+                            }
+                            break;
+                        }
+                        alt.push(c);
+                    }
+                    if found_end && !alt.is_empty() {
+                        result.push_str(&format!("[{}]", alt));
+                    }
+                }
+                // Handle links [text](url) - show just text
+                '[' => {
+                    let mut text = String::new();
+                    let mut found_link = false;
+                    while let Some(c) = chars.next() {
+                        if c == ']' {
+                            if chars.peek() == Some(&'(') {
+                                chars.next(); // consume '('
+                                // Skip URL until ), handling nested parens
+                                let mut depth = 1;
+                                while let Some(c) = chars.next() {
+                                    if c == '(' { depth += 1; }
+                                    if c == ')' { depth -= 1; if depth == 0 { break; } }
+                                }
+                                found_link = true;
+                            }
+                            break;
+                        }
+                        text.push(c);
+                    }
+                    if found_link {
+                        result.push_str(&text);
+                    } else {
+                        // Not a link, output as-is
+                        result.push('[');
+                        result.push_str(&text);
+                        result.push(']');
+                    }
+                }
+                // Handle bold **text**
+                '*' if chars.peek() == Some(&'*') => {
+                    chars.next(); // consume second *
+                    // Find closing **
+                    while let Some(c) = chars.next() {
+                        if c == '*' && chars.peek() == Some(&'*') {
+                            chars.next();
+                            break;
+                        }
+                        result.push(c);
+                    }
+                }
+                // Handle inline code `code`
+                '`' => {
+                    while let Some(c) = chars.next() {
+                        if c == '`' { break; }
+                        result.push(c);
+                    }
+                }
+                // Handle headers - remove # prefix
+                '#' if result.is_empty() => {
+                    // Skip all # and following space
+                    while chars.peek() == Some(&'#') {
+                        chars.next();
+                    }
+                    if chars.peek() == Some(&' ') {
+                        chars.next();
+                    }
+                }
+                _ => result.push(c),
+            }
+        }
+        result
     }
 
     /// Get the page URL

@@ -6,8 +6,9 @@ A hyper-modern, API-first terminal web browser with vim-mode navigation.
 
 - **API-first design** - Use as a CLI tool or library
 - **Vim-style navigation** - Familiar keybindings for efficient browsing
-- **JavaScript support** - Headless Chrome rendering via chromiumoxide
-- **Reader mode** - Readability-style content extraction
+- **JavaScript support** - Headless Chrome rendering via chromiumoxide (auto-downloads if needed)
+- **Accessibility tree extraction** - Uses Chrome's AX tree for semantic content
+- **Reader mode fallback** - Readability-style extraction for HTTP-only mode
 - **Multiple output formats** - Markdown, plain text, JSON
 - **Tab management** - Multiple buffers with vim-style switching
 - **History navigation** - Back/forward with persistent history
@@ -30,8 +31,11 @@ cargo build --release
 ### Fetch Mode (API-first)
 
 ```bash
-# Fetch webpage as markdown
+# Fetch webpage as markdown (uses accessibility tree by default)
 fox fetch https://example.com
+
+# Use readability extraction instead of accessibility tree
+fox fetch https://example.com --extraction readability
 
 # Skip JavaScript rendering (faster, HTTP only)
 fox fetch https://example.com --no-js
@@ -44,6 +48,16 @@ fox fetch https://example.com --format plain
 
 # Pipe-friendly
 fox fetch https://news.ycombinator.com | grep "Rust"
+```
+
+### Debug Mode
+
+```bash
+# Dump accessibility tree for a URL (useful for debugging)
+fox debug-ax https://example.com
+
+# Include markdown conversion
+fox debug-ax https://example.com --markdown
 ```
 
 ### Render Mode
@@ -117,6 +131,11 @@ default_mode = "reader"    # reader | full
 javascript = true          # Enable JS rendering
 timeout_secs = 30
 
+[browser]
+mode = "auto"              # auto | bundled | system | none
+extraction_method = "accessibility"  # accessibility | readability
+auto_update = true         # Auto-update bundled Chrome
+
 [display]
 max_width = 80             # Text wrap width
 show_links = "inline"      # inline | footnote | hidden
@@ -137,7 +156,7 @@ fox/
 ## Requirements
 
 - Rust 1.70+
-- For JavaScript rendering: Chrome/Chromium installed
+- For JavaScript rendering: Chrome/Chromium (auto-downloaded if not found)
 
 ## License
 

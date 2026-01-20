@@ -9,9 +9,10 @@ Fox is a terminal web browser written in Rust with vim-style navigation. It's de
 The project is organized as a Cargo workspace with three crates:
 
 - **fox-core**: Core library with no TUI dependencies
-  - `chrome.rs` - Chrome lifecycle management (auto-download, system detection)
+  - `chrome.rs` - Chrome lifecycle management (auto-download, system detection, progress callbacks)
   - `fetch.rs` - HTTP client (reqwest) and headless browser (chromiumoxide)
-  - `extract.rs` - Readability-style content extraction
+  - `accessibility.rs` - Chrome AX tree extraction and markdown conversion
+  - `extract.rs` - Readability-style content extraction (fallback)
   - `markdown.rs` - HTML to Markdown conversion
 
 - **fox-tui**: Interactive terminal UI
@@ -88,4 +89,17 @@ Configure in `config.toml`:
 mode = "auto"
 chrome_path = ""  # optional: custom Chrome path for system mode
 auto_update = true
+extraction_method = "accessibility"  # accessibility | readability
 ```
+
+## Content Extraction
+
+Fox supports two extraction methods:
+
+- **accessibility** (default): Uses Chrome's accessibility tree for semantic content extraction. Better for JavaScript-heavy pages and preserves document structure.
+- **readability**: Uses readability-style heuristics to extract main content. Works without JavaScript rendering.
+
+The fetch pipeline automatically falls back to readability when:
+- Using `--no-js` flag (HTTP-only mode)
+- Browser initialization fails
+- AX tree extraction fails
