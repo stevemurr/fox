@@ -422,13 +422,27 @@ impl Default for ChromeManager {
 async fn launch_browser(chrome_path: &Path) -> Result<BrowserHandle> {
     debug!("Launching browser from {:?}", chrome_path);
 
+    // Use a realistic Chrome user agent to avoid bot detection
+    let user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
     let (browser, mut handler) = Browser::launch(
         BrowserConfig::builder()
             .chrome_executable(chrome_path)
+            // Basic Chrome arguments
             .arg("--disable-gpu")
             .arg("--no-sandbox")
             .arg("--disable-dev-shm-usage")
             .arg("--disable-software-rasterizer")
+            // Anti-bot-detection arguments
+            .arg("--disable-blink-features=AutomationControlled")
+            .arg(format!("--user-agent={}", user_agent))
+            // Reduce fingerprinting signals
+            .arg("--disable-extensions")
+            .arg("--disable-infobars")
+            .arg("--disable-popup-blocking")
+            .arg("--disable-default-apps")
+            // Window size for consistent rendering
+            .arg("--window-size=1920,1080")
             .build()
             .map_err(|e| FoxError::BrowserError(e.to_string()))?,
     )

@@ -408,15 +408,25 @@ impl<'a> MarkdownConverter<'a> {
 
             // Headings
             "heading" => {
-                self.ensure_block_spacing();
-                let level = node.level.unwrap_or(1).min(6) as usize;
-                let prefix = "#".repeat(level);
                 if let Some(text) = self.get_node_text(node) {
-                    self.output.push_str(&prefix);
-                    self.output.push(' ');
-                    self.output.push_str(&text);
-                    self.output.push_str("\n\n");
-                    self.last_was_block = true;
+                    // Skip accessibility-related or generic section headings
+                    let text_lower = text.to_lowercase();
+                    let is_skip_heading = text_lower.contains("accessibility")
+                        || text_lower == "skip links"
+                        || text_lower == "navigation"
+                        || text_lower == "main navigation"
+                        || text_lower.starts_with("skip to");
+
+                    if !is_skip_heading {
+                        self.ensure_block_spacing();
+                        let level = node.level.unwrap_or(1).min(6) as usize;
+                        let prefix = "#".repeat(level);
+                        self.output.push_str(&prefix);
+                        self.output.push(' ');
+                        self.output.push_str(&text);
+                        self.output.push_str("\n\n");
+                        self.last_was_block = true;
+                    }
                 }
             }
 
@@ -452,7 +462,22 @@ impl<'a> MarkdownConverter<'a> {
                 let text = self.get_node_text(node).unwrap_or_default();
                 let url = node.url.as_deref().unwrap_or("#");
 
-                if !text.is_empty() {
+                // Skip internal anchor links (#) and skip-to-content style links
+                let is_skip_link = url == "#"
+                    || url.starts_with("#")
+                    || text.to_lowercase().contains("skip to")
+                    || text.to_lowercase().contains("skip navigation")
+                    || text.to_lowercase().contains("accessibility")
+                    || text.to_lowercase().starts_with("jump to");
+
+                if !text.is_empty() && !is_skip_link {
+                    // Add space before link if needed (for consecutive links)
+                    if let Some(last_char) = self.output.chars().last() {
+                        if last_char != ' ' && last_char != '\n' && last_char != '(' && last_char != '[' {
+                            self.output.push(' ');
+                        }
+                    }
+
                     let position = self.output.len();
                     self.output.push('[');
                     self.output.push_str(&text);
@@ -570,8 +595,31 @@ impl<'a> MarkdownConverter<'a> {
                 }
             }
 
-            // Tables
-            "table" => {
+            // Layout tables (Chrome distinguishes these from semantic data tables)
+            // These are used for page layout, not for tabular data
+            "LayoutTable" => {
+                // Render layout table content as simple blocks
+                self.convert_layout_table(node);
+            }
+
+            // Layout table rows - just process children
+            "LayoutTableRow" => {
+                self.convert_children(node);
+                // Add newline after each row
+                if !self.output.ends_with('\n') {
+                    self.output.push('\n');
+                }
+            }
+
+            // Layout table cells - just process children (skip name which may have padding)
+            "LayoutTableCell" => {
+                // Don't output cell names - they often contain padding/layout artifacts
+                // Just process the children which have the actual content
+                self.convert_children(node);
+            }
+
+            // Semantic data tables
+            "table" | "grid" => {
                 self.ensure_block_spacing();
                 self.convert_table(node);
                 self.output.push('\n');
@@ -624,15 +672,34 @@ impl<'a> MarkdownConverter<'a> {
                 self.convert_children(node);
             }
 
-            // Form elements
+            // Form elements - simplified display
             "textbox" | "searchbox" => {
-                let label = node.name.as_deref().unwrap_or("input");
-                self.output.push_str(&format!("[Input: {}]", label));
+                // Only show if it has a meaningful label
+                if let Some(label) = &node.name {
+                    let label = label.trim();
+                    if !label.is_empty() && label.len() > 2 {
+                        self.output.push_str(&format!("[{}: ___]", label));
+                    }
+                }
             }
 
             "button" => {
-                let label = node.name.as_deref().unwrap_or("button");
-                self.output.push_str(&format!("[Button: {}]", label));
+                // Only show buttons with meaningful labels
+                if let Some(label) = &node.name {
+                    let label = label.trim();
+                    // Skip empty, generic, or purely visual buttons
+                    if !label.is_empty()
+                        && label.len() > 1
+                        && !label.eq_ignore_ascii_case("button")
+                        && !label.eq_ignore_ascii_case("submit")
+                        && !label.eq_ignore_ascii_case("close")
+                        && !label.eq_ignore_ascii_case("menu")
+                        && !label.eq_ignore_ascii_case("search")
+                        && !label.starts_with("About")  // Skip "About this result" etc
+                    {
+                        self.output.push_str(&format!("[{}]", label));
+                    }
+                }
             }
 
             "checkbox" => {
@@ -740,6 +807,15 @@ impl<'a> MarkdownConverter<'a> {
     }
 
     fn convert_table(&mut self, table_node: &AXNode) {
+        // Check if this is a layout table - render as blocks instead
+        if self.is_layout_table(table_node) {
+            self.render_layout_table_as_blocks(table_node);
+            return;
+        }
+
+        // Maximum column width to prevent massive padding
+        const MAX_COL_WIDTH: usize = 60;
+
         let mut rows: Vec<Vec<String>> = Vec::new();
         let mut header_row: Option<usize> = None;
 
@@ -789,14 +865,15 @@ impl<'a> MarkdownConverter<'a> {
             return;
         }
 
-        // Calculate column widths
+        // Calculate column widths with cap
         let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
         let mut col_widths: Vec<usize> = vec![3; num_cols]; // minimum width of 3
 
         for row in &rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < col_widths.len() {
-                    col_widths[i] = col_widths[i].max(cell.len());
+                    // Cap column width at MAX_COL_WIDTH
+                    col_widths[i] = col_widths[i].max(cell.len()).min(MAX_COL_WIDTH);
                 }
             }
         }
@@ -807,7 +884,9 @@ impl<'a> MarkdownConverter<'a> {
             for (col_idx, cell) in row.iter().enumerate() {
                 let width = col_widths.get(col_idx).copied().unwrap_or(3);
                 self.output.push(' ');
-                self.output.push_str(&format!("{:width$}", cell, width = width));
+                // Truncate cell content if it exceeds max width
+                let display_cell = Self::truncate_cell_content(cell, width);
+                self.output.push_str(&format!("{:width$}", display_cell, width = width));
                 self.output.push_str(" |");
             }
             // Pad missing cells
@@ -843,6 +922,231 @@ impl<'a> MarkdownConverter<'a> {
         if !self.output.is_empty() && !self.output.ends_with('\n') {
             self.output.push('\n');
         }
+    }
+
+    /// Detect if a table is a layout table (used for positioning) vs a data table
+    fn is_layout_table(&self, table_node: &AXNode) -> bool {
+        let row_ids = self.get_table_row_ids(table_node);
+
+        if row_ids.is_empty() {
+            return true;
+        }
+
+        // Many rows without clear structure = layout table (HN has 90+ rows)
+        if row_ids.len() > 20 {
+            return true;
+        }
+
+        // Check for header cells - data tables typically have headers
+        let has_headers = row_ids.iter().any(|row_id| {
+            if let Some(row) = self.tree.get(row_id) {
+                self.tree.children(row).iter().any(|c| {
+                    c.role == "columnheader" || c.role == "rowheader"
+                })
+            } else {
+                false
+            }
+        });
+
+        if !has_headers {
+            // No headers = likely layout table
+            return true;
+        }
+
+        // Check column count - single column tables are often layout
+        let col_counts: Vec<usize> = row_ids.iter()
+            .filter_map(|row_id| self.tree.get(row_id))
+            .map(|row| {
+                self.tree.children(row)
+                    .iter()
+                    .filter(|c| matches!(c.role.as_str(), "cell" | "columnheader" | "rowheader" | "gridcell"))
+                    .count()
+            })
+            .collect();
+
+        if col_counts.iter().all(|&c| c <= 1) {
+            return true;
+        }
+
+        // Check for nested tables - layout tables often nest
+        let has_nested_tables = row_ids.iter()
+            .filter_map(|row_id| self.tree.get(row_id))
+            .any(|row| {
+                self.tree.children(row).iter().any(|cell| {
+                    self.has_descendant_table(cell)
+                })
+            });
+
+        if has_nested_tables {
+            return true;
+        }
+
+        // Check column width variance - layout tables have high variance
+        let mut col_widths: Vec<Vec<usize>> = Vec::new();
+        for row_id in &row_ids {
+            if let Some(row) = self.tree.get(row_id) {
+                let cells: Vec<&AXNode> = self.tree.children(row)
+                    .into_iter()
+                    .filter(|c| matches!(c.role.as_str(), "cell" | "columnheader" | "rowheader" | "gridcell"))
+                    .collect();
+
+                for (i, cell) in cells.iter().enumerate() {
+                    let text_len = self.get_node_text(cell).map(|t| t.len()).unwrap_or(0);
+                    if i >= col_widths.len() {
+                        col_widths.push(Vec::new());
+                    }
+                    col_widths[i].push(text_len);
+                }
+            }
+        }
+
+        // If any column has very high width variance (max/min ratio > 10), likely layout
+        for widths in &col_widths {
+            if widths.len() >= 2 {
+                let min = widths.iter().filter(|&&w| w > 0).min().copied().unwrap_or(1);
+                let max = widths.iter().max().copied().unwrap_or(0);
+                if min > 0 && max / min > 10 {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Get all row node IDs from a table, handling rowgroups and container nodes
+    fn get_table_row_ids(&self, table_node: &AXNode) -> Vec<String> {
+        let mut row_ids = Vec::new();
+        for child in self.tree.children(table_node) {
+            if child.role == "row" {
+                row_ids.push(child.node_id.clone());
+            } else if child.role == "rowgroup" || child.role == "none" || child.role == "generic" {
+                // Check for rows inside container nodes
+                for row_child in self.tree.children(child) {
+                    if row_child.role == "row" {
+                        row_ids.push(row_child.node_id.clone());
+                    }
+                }
+            }
+        }
+        row_ids
+    }
+
+    /// Check if a node has a table descendant
+    fn has_descendant_table(&self, node: &AXNode) -> bool {
+        for child in self.tree.children(node) {
+            if child.role == "table" {
+                return true;
+            }
+            if self.has_descendant_table(child) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Render a layout table as content blocks instead of a markdown table
+    fn render_layout_table_as_blocks(&mut self, table_node: &AXNode) {
+        let row_ids = self.get_table_row_ids(table_node);
+        let mut prev_row_was_empty = false;
+
+        for row_id in row_ids.into_iter() {
+            // Get cell IDs for this row
+            let cell_ids: Vec<String> = if let Some(row) = self.tree.get(&row_id) {
+                self.tree.children(row)
+                    .iter()
+                    .filter(|c| matches!(c.role.as_str(), "cell" | "columnheader" | "rowheader" | "gridcell"))
+                    .map(|c| c.node_id.clone())
+                    .collect()
+            } else {
+                continue;
+            };
+
+            // Check if this row starts a new numbered item (like "1.", "2.")
+            let starts_with_number = if let Some(first_cell_id) = cell_ids.first() {
+                if let Some(cell) = self.tree.get(first_cell_id) {
+                    self.get_node_text(cell)
+                        .map(|t| t.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Add extra spacing before numbered items (new story entries)
+            if starts_with_number && !self.output.is_empty() && !self.output.ends_with("\n\n") {
+                if self.output.ends_with('\n') {
+                    self.output.push('\n');
+                } else {
+                    self.output.push_str("\n\n");
+                }
+            }
+
+            // Track output length before processing this row
+            let len_before = self.output.len();
+
+            // Process each cell's content
+            for cell_id in cell_ids {
+                if let Some(cell) = self.tree.get(&cell_id) {
+                    // Recursively convert cell children
+                    self.convert_children(cell);
+                }
+            }
+
+            // Check if this row produced content
+            let row_has_content = self.output.len() > len_before;
+
+            if row_has_content {
+                // Trim trailing spaces but preserve newlines
+                while self.output.ends_with(' ') {
+                    self.output.pop();
+                }
+                // Ensure row ends with newline
+                if !self.output.ends_with('\n') {
+                    self.output.push('\n');
+                }
+                prev_row_was_empty = false;
+            } else {
+                // Empty row acts as separator - add blank line if previous row had content
+                if !prev_row_was_empty && !self.output.ends_with("\n\n") {
+                    if self.output.ends_with('\n') {
+                        self.output.push('\n');
+                    }
+                }
+                prev_row_was_empty = true;
+            }
+        }
+    }
+
+    /// Truncate a string to max length with ellipsis
+    fn truncate_cell_content(content: &str, max_width: usize) -> String {
+        if content.len() <= max_width {
+            content.to_string()
+        } else {
+            format!("{}...", &content[..max_width.saturating_sub(3)])
+        }
+    }
+
+    /// Convert a layout table (used for page layout, not data)
+    /// Renders content as simple blocks without table formatting
+    fn convert_layout_table(&mut self, table_node: &AXNode) {
+        self.ensure_block_spacing();
+
+        // Simply process all children - the LayoutTableRow and LayoutTableCell
+        // handlers will add appropriate newlines
+        self.convert_children(table_node);
+
+        // Ensure we end with proper spacing
+        if !self.output.ends_with("\n\n") {
+            if self.output.ends_with('\n') {
+                self.output.push('\n');
+            } else {
+                self.output.push_str("\n\n");
+            }
+        }
+        self.last_was_block = true;
     }
 }
 
